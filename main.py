@@ -7,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from passlib.context import CryptContext
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
+from sqlalchemy.orm import Session
 import logging
 import models
 import datetime
@@ -32,7 +33,12 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
 # Dependency
-db = SessionLocal()
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 
 def verify_password(plain_password, hashed_password):
@@ -43,11 +49,11 @@ def get_password_hash(password):
     return pwd_context.hash(password)
 
 
-def get_user(db, username: str):
+def get_user(username: str, db: Session = Depends(get_db)):
     return db.query(models.User).filter(models.User.username == username).first()
 
-def authenticate_user(db, username: str, password: str):
-    user = get_user(db, username)
+def authenticate_user(username: str, password: str, db: Session = Depends(get_db)):
+    user = get_user(username,db)
     if not user:
         return False
     if not verify_password(password, user.hashed_password):
@@ -66,7 +72,7 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None):
     return encoded_jwt
 
 
-async def get_current_user(token: str = Depends(oauth2_scheme)):
+def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -80,17 +86,17 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
         token_data = TokenData(username=username)
     except JWTError:
         raise credentials_exception
-    user = get_user(db, username=token_data.username)
+    user = get_user(username, db)
     if user is None:
         raise credentials_exception
     return user
 
 
-async def get_current_active_user(current_user: User = Depends(get_current_user)):
+def get_current_active_user(current_user: User = Depends(get_current_user)):
     return current_user
 
 @app.post("/register-user/", status_code=status.HTTP_201_CREATED)
-def create_user(user: UserInDB):
+def create_user(user: UserInDB, db: Session = Depends(get_db)):
     db_user = models.User(username=user.username, hashed_password=get_password_hash(user.password))
     db.add(db_user)
     db.commit()
@@ -100,8 +106,8 @@ def create_user(user: UserInDB):
 
 
 @app.post("/token", response_model=Token)
-async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
-    user = authenticate_user(db, form_data.username, form_data.password)
+async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    user = authenticate_user(form_data.username, form_data.password, db)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -116,14 +122,14 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
 
 
 @app.get("/list-conversion-requests",response_model = List[Conversion],status_code=200)
-def get_all_conversion_requests(current_user: User = Depends(get_current_active_user)):
+def get_all_conversion_requests(current_user: User = Depends(get_current_active_user), db: Session = Depends(get_db)):
     logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.INFO)
     logging.info('request made for listing all conversion')
     conversion_requets = db.query(models.Conversion).all()
     return conversion_requets
 
 @app.post("/uploadfile/",status_code=status.HTTP_201_CREATED)
-def convert_jpeg_to_png(file: UploadFile, current_user: User = Depends(get_current_active_user)):
+def convert_jpeg_to_png(file: UploadFile, current_user: User = Depends(get_current_active_user), db: Session = Depends(get_db)):
     print("current user is ", current_user)
     logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.INFO)
     logging.info('request made for uploading file for conversion')
