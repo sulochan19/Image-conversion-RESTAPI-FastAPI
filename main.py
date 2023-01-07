@@ -1,113 +1,40 @@
+from database import engine
+from datetime import timedelta
 from fastapi import Depends, FastAPI, HTTPException, status, UploadFile
-from schemas import Conversion, UserInDB, User, Token, TokenData
-from database import SessionLocal, engine
-from typing import List
-from PIL import Image
 from fastapi.staticfiles import StaticFiles
-from passlib.context import CryptContext
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from jose import JWTError, jwt
+from fastapi.security import OAuth2PasswordRequestForm
+from PIL import Image
+from schemas import Conversion, UserInDB, User, Token
 from sqlalchemy.orm import Session
+from typing import List
+import datetime
 import logging
 import models
-import datetime
-from datetime import timedelta
+import services
 import os
 
 BASE_DIR = os.path.dirname(os.path.realpath(__file__))
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 
 models.Base.metadata.create_all(bind=engine)
-
-# new code from here
-SECRET_KEY = "5bdef4331cc64c5f0686e9cfae40e57c964b063f3fff9bc378af46f2f6d4a8c0"
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
-
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
-
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
-# Dependency
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-
-def verify_password(plain_password, hashed_password):
-    return pwd_context.verify(plain_password, hashed_password)
-
-
-def get_password_hash(password):
-    return pwd_context.hash(password)
-
-
-def get_user(username: str, db: Session = Depends(get_db)):
-    return db.query(models.User).filter(models.User.username == username).first()
-
-def authenticate_user(username: str, password: str, db: Session = Depends(get_db)):
-    user = get_user(username,db)
-    if not user:
-        return False
-    if not verify_password(password, user.hashed_password):
-        return False
-    return user
-
-
-def create_access_token(data: dict, expires_delta: timedelta | None = None):
-    to_encode = data.copy()
-    if expires_delta:
-        expire = datetime.datetime.utcnow() + expires_delta
-    else:
-        expire = datetime.datetime.utcnow() + timedelta(minutes=15)
-    to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
-
-
-def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
-        if username is None:
-            raise credentials_exception
-        token_data = TokenData(username=username)
-    except JWTError:
-        raise credentials_exception
-    user = get_user(username, db)
-    if user is None:
-        raise credentials_exception
-    return user
-
-
-def get_current_active_user(current_user: User = Depends(get_current_user)):
-    return current_user
-
 @app.post("/register-user/", status_code=status.HTTP_201_CREATED)
-def create_user(user: UserInDB, db: Session = Depends(get_db)):
-    db_user = models.User(username=user.username, hashed_password=get_password_hash(user.password))
+def create_user(user: UserInDB, db: Session = Depends(services.get_db)):
+    db_user = models.User(username=user.username, hashed_password=services.get_password_hash(user.password))
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
-
     return {"status": "success! user has been created"}
 
 
 @app.post("/token", response_model=Token)
-async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    user = authenticate_user(form_data.username, form_data.password, db)
+async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(services.get_db)):
+    user = services.authenticate_user(form_data.username, form_data.password, db)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -115,21 +42,14 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
             headers={"WWW-Authenticate": "Bearer"},
         )
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(
+    access_token = services.create_access_token(
         data={"sub": user.username}, expires_delta=access_token_expires
     )
     return {"access_token": access_token, "token_type": "bearer"}
 
 
-@app.get("/list-conversion-requests",response_model = List[Conversion],status_code=200)
-def get_all_conversion_requests(current_user: User = Depends(get_current_active_user), db: Session = Depends(get_db)):
-    logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.INFO)
-    logging.info('request made for listing all conversion')
-    conversion_requets = db.query(models.Conversion).all()
-    return conversion_requets
-
 @app.post("/uploadfile/",status_code=status.HTTP_201_CREATED)
-def convert_jpeg_to_png(file: UploadFile, current_user: User = Depends(get_current_active_user), db: Session = Depends(get_db)):
+def convert_jpeg_to_png(file: UploadFile, current_user: User = Depends(services.get_current_active_user), db: Session = Depends(services.get_db)):
     print("current user is ", current_user)
     logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.INFO)
     logging.info('request made for uploading file for conversion')
@@ -159,7 +79,6 @@ def convert_jpeg_to_png(file: UploadFile, current_user: User = Depends(get_curre
         status = "success",
         created_at = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
         )
-
         db.add(new_conversion)
         db.commit()
         db.refresh(new_conversion)
@@ -168,6 +87,13 @@ def convert_jpeg_to_png(file: UploadFile, current_user: User = Depends(get_curre
     except:
         db.close()
         logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.ERROR)
-        logging.error("Request for image conversion could not be stored in database")
-        
+        logging.error("Request for image conversion could not be stored in database")   
     return {"png-url" : png_url, "status" : "Success"}
+
+
+@app.get("/list-conversion-requests",response_model = List[Conversion],status_code=200)
+def get_all_conversion_requests(current_user: User = Depends(services.get_current_active_user), db: Session = Depends(services.get_db)):
+    logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.INFO)
+    logging.info('request made for listing all conversion')
+    conversion_requets = db.query(models.Conversion).all()
+    return conversion_requets
