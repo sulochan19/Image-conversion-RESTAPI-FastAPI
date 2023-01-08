@@ -36,7 +36,11 @@ def create_user(user: UserInDB, db: Session = Depends(services.get_db)):
     Returns:
     A dictionary containing the status of the user creation.
     """
+    logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.INFO)
+    logging.info('Request made for creating user')
     services.create_user_in_db(db, user.username, services.get_password_hash(user.password))
+    logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.INFO)
+    logging.info('User has been created successfully')
     return {"status": "success! user has been created"}
 
 
@@ -63,6 +67,8 @@ def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db:
         )
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = services.create_access_token_for_user(user, access_token_expires)
+    logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.INFO)
+    logging.info('Access token has been generated')
     return {"access_token": access_token, "token_type": "bearer"}
 
 
@@ -78,20 +84,21 @@ def convert_jpeg_to_png(file: UploadFile, current_user: User = Depends(services.
     Returns:
     A dictionary containing the URL of the converted PNG image and the status of the conversion.
     """
+    
     logging.info("Received request to convert JPEG to PNG")
     
     # Save the user input JPEG image
-    jpeg_file_path = os.path.join(BASE_DIR, "static/media/") + file.filename
+    jpeg_file_path = "static/media/" + file.filename
     services.save_image(Image.open(file.file), jpeg_file_path)
     
     # Convert the image to PNG
-    png_file_path = os.path.join(BASE_DIR, "static/media/") + file.filename.split('.')[0] + ".png"
+    png_file_path =  "static/media/" + file.filename.split('.')[0] + ".png"
     services.convert_image(jpeg_file_path, png_file_path)
     
     # Store the conversion request in the database
     new_conversion = models.Conversion(
         source_file=jpeg_file_path,
-        png_url=png_file_path,
+        png_url= "static/media/" + file.filename.split('.')[0] + ".png",
         status="success",
         created_at=datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     )
@@ -114,7 +121,7 @@ def get_all_conversion_requests(current_user: User = Depends(services.get_curren
     A list of all conversion requests.
     """
     logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.INFO)
-    logging.info('request made for listing all conversion')
+    logging.info('Request made for listing all conversion')
     return services.get_conversion_requests(db)
 
 
