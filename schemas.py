@@ -21,7 +21,7 @@ class User(BaseModel):
     username: str
 
 class UserInDB(User):
-    hashed_password: str
+    password: str
 
     class config:
         orm_mode = True
