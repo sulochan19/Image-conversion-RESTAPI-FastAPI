@@ -11,7 +11,7 @@ To install the project: <br />
         POSTGRES_SERVER=
         POSTGRES_DB=
 
-        TEST_POSTGRES_DB=test_fast_api <br />
+        TEST_POSTGRES_DB=  (separate database to run unittest)<br />
         
     5)Command to run the project-> uvicorn main:app --reload <br />
     6)Go to /docs for all the routes <br />
